@@ -114,23 +114,23 @@ As always, try to guess the output first! And don't forget to insert
 the output in here:
 
 >>> :k Char
-
+Char :: *
 >>> :k Bool
-
+Bool :: *
 >>> :k [Int]
-
+[Int] :: *
 >>> :k []
-
+[] :: * -> *
 >>> :k (->)
-
+(->) :: * -> * -> *
 >>> :k Either
-
+Either :: * -> * -> *
 >>> data Trinity a b c = MkTrinity a b c
 >>> :k Trinity
-
+Trinity :: * -> * -> * -> *
 >>> data IntBox f = MkIntBox (f Int)
 >>> :k IntBox
-
+IntBox :: (* -> *) -> *
 -}
 
 {- |
@@ -293,7 +293,19 @@ values and apply them to the type level?
 -}
 instance Functor (Secret e) where
     fmap :: (a -> b) -> Secret e a -> Secret e b
-    fmap = error "fmap for Box: not implemented!"
+    fmap _ (Trap e)   = Trap e
+    fmap f (Reward a) = Reward (f a)
+
+{-
+Unclear, why does
+
+instance Functor (Secret e) where
+    fmap :: (a -> b) -> Secret a e -> Secret b e
+    fmap _ (Reward e)   = Reward e
+    fmap f (Trap a) = Trap (f a)
+
+not work?
+-}
 
 {- |
 =⚔️= Task 3
@@ -306,6 +318,11 @@ typeclasses for standard data types.
 data List a
     = Empty
     | Cons a (List a)
+
+instance Functor List where
+    fmap :: (a -> b) -> List a -> List b
+    fmap f (Cons x xs) = Cons (f x) (fmap f xs)
+    fmap _ Empty = Empty
 
 {- |
 =🛡= Applicative
@@ -472,10 +489,11 @@ Implement the Applicative instance for our 'Secret' data type from before.
 -}
 instance Applicative (Secret e) where
     pure :: a -> Secret e a
-    pure = error "pure Secret: Not implemented!"
+    pure = Reward -- why not Trap?
 
     (<*>) :: Secret e (a -> b) -> Secret e a -> Secret e b
-    (<*>) = error "(<*>) Secret: Not implemented!"
+    Trap e <*> _ = Trap e
+    Reward f <*> x = fmap f x
 
 {- |
 =⚔️= Task 5
@@ -489,6 +507,18 @@ Implement the 'Applicative' instance for our 'List' type.
   type.
 -}
 
+instance Applicative List where
+    pure :: a -> List a
+    pure x = Cons x Empty
+
+    (<*>) :: List (a->b) -> List a -> List b
+    Empty <*> _ = Empty
+    _ <*> Empty = Empty
+    Cons f fs <*> l = concatList (fmap f l) (fs <*> l)
+
+concatList :: List a -> List a -> List a
+concatList Empty ys = ys
+concatList (Cons x xs) ys = Cons x (concatList xs ys)
 
 {- |
 =🛡= Monad
@@ -584,6 +614,7 @@ methods of all three typeclasses:
 fmap  ::   (a -> b) -> f a -> f b
 (<*>) :: f (a -> b) -> f a -> f b
 (=<<) :: (a -> f b) -> f a -> f b
+(>>=) :: f a -> (a -> f b) -> f b
 @
 
 ♫ NOTE: The (=<<) operator is a version (>>=) with arguments
@@ -600,7 +631,8 @@ Implement the 'Monad' instance for our 'Secret' type.
 -}
 instance Monad (Secret e) where
     (>>=) :: Secret e a -> (a -> Secret e b) -> Secret e b
-    (>>=) = error "bind Secret: Not implemented!"
+    Trap e >>= _ = Trap e
+    Reward a >>= f =  f a
 
 {- |
 =⚔️= Task 7
@@ -611,6 +643,14 @@ Implement the 'Monad' instance for our lists.
   maybe a few) to flatten lists of lists to a single list.
 -}
 
+instance Monad List where
+    (>>=) :: List a -> (a -> List b) -> List b
+    l >>= f = flatten (fmap f l)
+
+flatten :: List(List a) -> List a
+flatten Empty = Empty
+-- reuse concatList
+flatten (Cons x xs) = concatList x (flatten xs)
 
 {- |
 =💣= Task 8*: Before the Final Boss
@@ -628,8 +668,9 @@ Can you implement a monad version of AND, polymorphic over any monad?
 
 🕯 HINT: Use "(>>=)", "pure" and anonymous function
 -}
+
 andM :: (Monad m) => m Bool -> m Bool -> m Bool
-andM = error "andM: Not implemented!"
+andM ma mb = ma >>= \a -> if a then mb else ma
 
 {- |
 =🐉= Task 9*: Final Dungeon Boss
@@ -673,6 +714,26 @@ Specifically,
  ❃ Implement the function to convert Tree to list
 -}
 
+data BinTree a = Leaf | Node a (BinTree a) (BinTree a)
+
+instance Functor BinTree where
+    fmap :: (a -> b) -> BinTree a -> BinTree b
+    fmap _ Leaf = Leaf
+    fmap f (Node x l r) = Node (f x) (fmap f l) (fmap f r)
+
+reverseTree :: BinTree a -> BinTree a
+reverseTree Leaf = Leaf
+reverseTree (Node x l r) = Node x (reverseTree r) (reverseTree l)
+
+toList :: BinTree a -> [a]
+toList Leaf = []
+--toList (Node x l r) = x : (toList l) ++ (toList r)
+toList (Node x l r) = go (Node x l r) []
+  where
+    go :: BinTree a -> [BinTree a] -> [a]
+    go Leaf               []      = []
+    go Leaf               (x:xs)  = go x xs
+    go (Node x l r)       list    = x : go l (r:list)
 
 {-
 You did it! Now it is time to open pull request with your changes
